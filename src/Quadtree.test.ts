@@ -11,22 +11,22 @@
 // } from './Quadtree';
 import Quadtree, { Quadrant, Point } from './Quadtree';
 
-describe('works', () => {
-  test('tree', () => {
-    let points = [
-      {
-        location: [100, 100],
-      },
-      {
-        location: [50, 50],
-      },
-    ] as Point[];
+// describe('works', () => {
+//   test('tree', () => {
+//     let points = [
+//       {
+//         location: [100, 100],
+//       },
+//       {
+//         location: [50, 50],
+//       },
+//     ] as Point[];
 
-    let tree = Quadtree.build({ width: 500, height: 500, points });
+//     let tree = Quadtree.build({ width: 500, height: 500, points });
 
-    console.log('JSON.stringify(tree)', JSON.stringify(tree, null, 2));
-  });
-});
+//     console.log('JSON.stringify(tree)', JSON.stringify(tree, null, 2));
+//   });
+// });
 
 // describe('', () => {
 //   test('', () => {

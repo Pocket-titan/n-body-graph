@@ -1,22 +1,5 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Quadtree, { Quadrant, isPoint, Point, isLeaf, Leaf, calculate_region_size } from './Quadtree';
-
-let points = [
-  {
-    location: [100, 100],
-  },
-  {
-    location: [50, 50],
-  },
-  {
-    location: [25, 25],
-  },
-  {
-    location: [300, 300],
-  },
-];
-
-let tree = Quadtree.build({ width: 500, height: 500, points });
 
 const Circle = ({ point }: { point: Point }) => {
   const { location } = point;
@@ -61,7 +44,47 @@ const QuadTree = ({ quadtree }: { quadtree: Quadrant }) => {
   );
 };
 
+let points = [
+  {
+    location: [100, 100],
+  },
+  {
+    location: [50, 50],
+  },
+  {
+    location: [25, 25],
+  },
+  {
+    location: [300, 300],
+  },
+];
+
+let initial_tree = Quadtree.build({ width: 500, height: 500, points });
+
 const App = () => {
+  const [tree, setTree] = useState(initial_tree);
+
+  useEffect(() => {
+    const schedule = () =>
+      setTimeout(() => {
+        update();
+        schedule();
+      }, 1000);
+
+    schedule();
+  }, []);
+
+  const update = () => {
+    setTree((old_tree) => {
+      return Quadtree.update(old_tree, (point) => {
+        return {
+          ...point,
+          location: [point.location[0] + 1, point.location[1] + 1],
+        };
+      });
+    });
+  };
+
   return (
     <div
       style={{

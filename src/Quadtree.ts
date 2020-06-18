@@ -1,6 +1,3 @@
-import { curry } from 'ramda';
-import produce from 'immer';
-
 const max_children_per_quadrant = 1;
 
 type Vector = number[]; // = [number, number]
@@ -14,15 +11,13 @@ interface Point {
   location: Vector;
 }
 
-type Points = Point[] & { length: 0 | 1 }; // max_children_per_quadrant = 1
-
 type Region = {
   nw: Vector;
   se: Vector;
 };
 
 type Leaf = Region & {
-  children: Points;
+  children: Point[];
 };
 
 type Branch = Region & {
@@ -54,7 +49,11 @@ const region_contains_point = ({ nw, se }: Region, { location: [x, y] }: Point):
   nw[0] <= x && x <= se[0] && nw[1] <= y && y <= se[1];
 
 const isLeaf = (quadrant: Quadrant): quadrant is Leaf =>
-  quadrant.children.every(isPoint) && [0, 1].includes(quadrant.children.length);
+  quadrant &&
+  quadrant.children &&
+  quadrant.children instanceof Array &&
+  quadrant.children.every(isPoint) &&
+  [...Array(max_children_per_quadrant + 1).keys()].includes(quadrant.children.length);
 
 const add_vectors = (location: Vector, [width, height]: Vector): Vector => [location[0] + width, location[1] + height];
 
@@ -110,32 +109,29 @@ const accumulate_points = (quadrant: Quadrant): Point[] => {
   );
 };
 
-const trim_empty_branches = (branch: Branch): Branch | Leaf => {
-  const { nw, se, children } = branch;
+const trim_empty_branches = (quadrant: Quadrant): Quadrant => {
+  if (isLeaf(quadrant)) {
+    return quadrant;
+  }
+
+  const { children } = quadrant;
 
   if (children.every((child) => isLeaf(child))) {
-    let points = accumulate_points(branch);
+    let points = accumulate_points(quadrant);
 
     if (points.length <= max_children_per_quadrant) {
       return {
-        nw: nw,
-        se: se,
-        children: points as Points,
+        ...quadrant,
+        children: points as Point[],
       } as Leaf;
     }
 
-    return branch;
+    return quadrant as Branch;
   }
 
   return {
-    ...branch,
-    children: children.map((child) => {
-      if (isLeaf(child)) {
-        return child;
-      }
-
-      return trim_empty_branches(child);
-    }),
+    ...quadrant,
+    children: children.map(trim_empty_branches),
   } as Branch;
 };
 
@@ -218,6 +214,7 @@ const Quadtree = {
     return quadrant.children.reduce((child_acc, child_curr) => Quadtree.reduce(child_curr, fn, child_acc), result);
   },
 
+  // Returns a depth-first iterator
   dfs: (quadrant: Quadrant) => {
     let stack = [quadrant];
 
@@ -236,6 +233,7 @@ const Quadtree = {
     };
   },
 
+  // Returns a breadth-first iterator
   bfs: (quadrant: Quadrant) => {
     let queue = [quadrant];
 
@@ -252,6 +250,36 @@ const Quadtree = {
         }
       },
     };
+  },
+
+  update: (quadtree: Quadrant, fn: (point: Point) => Point) => {
+    let points_to_rehome: Point[] = [];
+
+    let new_tree = Quadtree.map(quadtree, (quadrant: Quadrant) => {
+      if (isLeaf(quadrant)) {
+        let new_children = quadrant.children.map(fn).filter((point) => {
+          if (!region_contains_point(quadrant as Region, point)) {
+            points_to_rehome.push(point);
+            return false;
+          }
+
+          return true;
+        });
+
+        return {
+          ...quadrant,
+          children: new_children,
+        };
+      }
+
+      return quadrant;
+    });
+
+    for (let point of points_to_rehome) {
+      new_tree = Quadtree.insert(point, new_tree);
+    }
+
+    return trim_empty_branches(new_tree);
   },
 };
 
