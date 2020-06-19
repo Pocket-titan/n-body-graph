@@ -9,6 +9,11 @@ type Region = {
   se: Vector;
 };
 
+type Size = {
+  width: number;
+  height: number;
+};
+
 type Point = {
   [key: string]: any;
   location: number[];
@@ -111,15 +116,18 @@ const split_into_quadrants = ({ nw, se, children }: Leaf): Branch => {
   };
 
   for (let point of children) {
-    branch = insert(point, branch) as Branch;
+    branch = insert(branch, point) as Branch;
   }
 
   return branch;
 };
 
-const insert = (point: Point, quadrant: Quadrant): Quadrant => {
+const insert = (quadrant: Quadrant, point: Point): Quadrant => {
   if (!contains_point(quadrant, point)) {
-    throw new Error();
+    console.error(
+      `Could not insert point: ${point} into quadrant: ${quadrant} because the point is not contained in the quadrant`
+    );
+    return quadrant;
   }
 
   if (isLeaf(quadrant)) {
@@ -142,7 +150,7 @@ const insert = (point: Point, quadrant: Quadrant): Quadrant => {
     children: quadrant.children.map((child) => {
       if (!found_a_place && contains_point(child, point)) {
         found_a_place = true;
-        return insert(point, child);
+        return insert(child, point);
       }
 
       return child;
@@ -156,9 +164,52 @@ const insert = (point: Point, quadrant: Quadrant): Quadrant => {
   return new_quadrant as Branch;
 };
 
+const trim_empty_branches = (quadrant: Quadrant): Quadrant => {
+  if (isLeaf(quadrant)) {
+    return quadrant;
+  }
+
+  if (quadrant.children.every((child) => isLeaf(child))) {
+    let points = (quadrant.children as [Leaf, Leaf, Leaf, Leaf]).reduce(
+      (arr, { children }) => [...arr, ...children],
+      [] as Point[]
+    );
+
+    if (points.length <= max_children_per_quadrant) {
+      return {
+        ...quadrant,
+        children: points as Point[],
+      } as Leaf;
+    }
+
+    return quadrant as Branch;
+  }
+
+  let me_and_my_sons = {
+    ...quadrant,
+    children: quadrant.children.map(trim_empty_branches),
+  } as Branch;
+
+  if (me_and_my_sons.children.every((child) => isLeaf(child))) {
+    let points = (me_and_my_sons.children as [Leaf, Leaf, Leaf, Leaf]).reduce(
+      (arr, { children }) => [...arr, ...children],
+      [] as Point[]
+    );
+
+    if (points.length <= max_children_per_quadrant) {
+      return {
+        ...me_and_my_sons,
+        children: points as Point[],
+      } as Leaf;
+    }
+  }
+
+  return me_and_my_sons;
+};
+
 // Ugh I could have avoided this if I made Quadtree a Quadrant itself but idk
 const Quadtree = {
-  build: ({ width, height, points = [] }: { width: number; height: number; points: Point[] }): Tree => {
+  build: ({ width, height }: Size, points: Point[] = []): Tree => {
     let tree: Tree = {
       width,
       height,
@@ -170,23 +221,54 @@ const Quadtree = {
     };
 
     for (let point of points) {
-      tree = Quadtree.insert(point, tree);
+      tree = Quadtree.insert(tree, point);
     }
 
     return tree;
   },
-  insert: (point: Point, tree: Tree) => ({
+  insert: (tree: Tree, point: Point): Tree => ({
     ...tree,
-    root: insert(point, tree.root),
+    root: insert(tree.root, point),
   }),
   update: (tree: Tree, fn: (point: Point) => Point): Tree => {
-    return tree;
+    let points_to_rehome: Point[] = [];
+
+    let new_tree = Quadtree.map(tree, (quadrant: Quadrant) => {
+      if (isLeaf(quadrant)) {
+        return {
+          ...quadrant,
+          children: quadrant.children.map(fn).filter((new_point) => {
+            if (contains_point(quadrant, new_point)) {
+              return true;
+            }
+
+            points_to_rehome.push(new_point);
+            return false;
+          }),
+        } as Leaf;
+      }
+
+      return quadrant;
+    });
+
+    for (let point of points_to_rehome) {
+      new_tree = Quadtree.insert(new_tree, point);
+    }
+
+    new_tree = {
+      ...new_tree,
+      root: trim_empty_branches(new_tree.root),
+    };
+
+    return new_tree;
   },
   map: (tree: Tree, fn: (quadrant: Quadrant) => Quadrant): Tree => ({
     ...tree,
     root: map_quadrant(tree.root, fn),
   }),
-  reduce: <T>(tree: Tree, fn: (acc: T, curr: Quadrant) => T, value: T): T => reduce_quadrant(tree.root, fn, value),
+  reduce: <T>(tree: Tree, fn: (acc: T, curr: Quadrant) => T, value: T): T => {
+    return reduce_quadrant(tree.root, fn, value);
+  },
 };
 
 export default Quadtree;
