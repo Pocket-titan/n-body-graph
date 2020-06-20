@@ -1,4 +1,4 @@
-import Quadtree from './New';
+import Quadtree from './Quadtree';
 
 describe('works', () => {
   test('does', () => {

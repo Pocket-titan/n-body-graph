@@ -1,19 +1,22 @@
-const max_children_per_quadrant = 1;
+import produce from 'immer';
+import { Stack, List } from 'immutable';
+import vector, { Vector } from './vector';
 
-type Vector = number[]; // = [number, number]
+const max_children_per_quadrant: number = 1;
+
+type Region = {
+  nw: Vector;
+  se: Vector;
+};
 
 type Size = {
   width: number;
   height: number;
 };
 
-interface Point {
-  location: Vector;
-}
-
-type Region = {
-  nw: Vector;
-  se: Vector;
+type Point = {
+  [key: string]: any;
+  location: number[];
 };
 
 type Leaf = Region & {
@@ -26,12 +29,13 @@ type Branch = Region & {
 
 type Quadrant = Leaf | Branch;
 
-interface Quadtree {
+type Tree = {
   width: number;
   height: number;
   root: Quadrant;
-}
+};
 
+// Utility stuff
 const isPoint = (point_or_not: any): point_or_not is Point => {
   return (
     'location' in (point_or_not as Point) &&
@@ -40,73 +44,124 @@ const isPoint = (point_or_not: any): point_or_not is Point => {
   );
 };
 
-const calculate_region_size = ({ nw, se }: Region): Size => ({
+const isLeaf = (quadrant: Quadrant): quadrant is Leaf => {
+  return (
+    (quadrant as Leaf)?.children?.every(isPoint) &&
+    [...Array(max_children_per_quadrant + 1).keys()].includes(quadrant.children.length)
+  );
+};
+
+const contains_point = ({ nw, se }: Region, { location: [x, y] }: Point): Boolean => {
+  return nw[0] <= x && x <= se[0] && nw[1] <= y && y <= se[1];
+};
+
+const calculate_region_size = ({ nw, se }: Region): { width: number; height: number } => ({
   width: Math.abs(se[0] - nw[0]),
   height: Math.abs(se[1] - nw[1]),
 });
 
-const region_contains_point = ({ nw, se }: Region, { location: [x, y] }: Point): Boolean =>
-  nw[0] <= x && x <= se[0] && nw[1] <= y && y <= se[1];
+// The meat
+const reduce_quadrant = <T>(quadrant: Quadrant, fn: (acc: T, curr: Quadrant) => T, value: T): T => {
+  let result = fn(value, quadrant);
 
-const isLeaf = (quadrant: Quadrant): quadrant is Leaf =>
-  quadrant &&
-  quadrant.children &&
-  quadrant.children instanceof Array &&
-  quadrant.children.every(isPoint) &&
-  [...Array(max_children_per_quadrant + 1).keys()].includes(quadrant.children.length);
+  if (isLeaf(quadrant)) {
+    return result;
+  }
 
-const add_vectors = (location: Vector, [width, height]: Vector): Vector => [location[0] + width, location[1] + height];
+  return quadrant.children.reduce((child_acc, child_curr) => reduce_quadrant(child_curr, fn, child_acc), result);
+};
 
-const leaf_to_branch = ({ nw, se, children }: Leaf): Branch => {
-  let { width, height }: Size = calculate_region_size({ nw, se });
-  let [quadrant_width, quadrant_height] = [width / 2, height / 2];
+const map_quadrant = (quadrant: Quadrant, fn: (quadrant: Quadrant) => Quadrant): Quadrant => {
+  let result = fn(quadrant);
+
+  if (isLeaf(result)) {
+    return result as Leaf;
+  }
+
+  return {
+    ...result,
+    children: result.children.map((child) => map_quadrant(child, fn)),
+  } as Branch;
+};
+
+const split_into_quadrants = ({ nw, se, children }: Leaf): Branch => {
+  const size = calculate_region_size({ nw, se });
+  const [width, height] = [size.width / 2, size.height / 2];
 
   let branch: Branch = {
-    nw: nw,
-    se: se,
+    nw,
+    se,
     children: [
       {
         nw: nw,
-        se: add_vectors(se, [-quadrant_width, -quadrant_height]),
+        se: vector.add(se, [-width, -height]),
         children: [],
       }, // top-left
       {
-        nw: add_vectors(nw, [quadrant_width, 0]),
-        se: add_vectors(se, [0, -quadrant_height]),
+        nw: vector.add(nw, [width, 0]),
+        se: vector.add(se, [0, -height]),
         children: [],
       }, // top-right
       {
-        nw: add_vectors(nw, [quadrant_width, quadrant_height]),
+        nw: vector.add(nw, [width, height]),
         se: se,
         children: [],
       }, // bottom-right
       {
-        nw: add_vectors(nw, [0, quadrant_height]),
-        se: add_vectors(se, [-quadrant_width, 0]),
+        nw: vector.add(nw, [0, height]),
+        se: vector.add(se, [-width, 0]),
         children: [],
       }, // bottom-left
     ],
   };
 
   for (let point of children) {
-    branch = insert(point, branch) as Branch;
+    branch = insert(branch, point) as Branch;
   }
 
   return branch;
 };
 
-const accumulate_points = (quadrant: Quadrant): Point[] => {
-  return Quadtree.reduce(
-    quadrant,
-    (arr, child) => {
-      if (isLeaf(child)) {
-        return [...arr, ...child.children];
+const insert = (quadrant: Quadrant, point: Point): Quadrant => {
+  if (!contains_point(quadrant, point)) {
+    console.error(
+      `Could not insert point: ${point} into quadrant: ${quadrant} because the point is not contained in the quadrant`
+    );
+    return quadrant;
+  }
+
+  if (isLeaf(quadrant)) {
+    let new_quadrant: Leaf = {
+      ...quadrant,
+      children: [...quadrant.children, point],
+    };
+
+    if (new_quadrant.children.length > max_children_per_quadrant) {
+      return split_into_quadrants(new_quadrant) as Branch;
+    }
+
+    return new_quadrant as Leaf;
+  }
+
+  let found_a_place = false;
+
+  let new_quadrant = {
+    ...quadrant,
+    children: quadrant.children.map((child) => {
+      if (!found_a_place && contains_point(child, point)) {
+        found_a_place = true;
+        return insert(child, point);
       }
 
-      return arr;
-    },
-    [] as Point[]
-  );
+      return child;
+    }),
+  } as Branch;
+
+  if (!found_a_place) {
+    throw new Error();
+  }
+
+  return new_quadrant as Branch;
 };
 
 const trim_empty_branches = (quadrant: Quadrant): Quadrant => {
@@ -114,10 +169,11 @@ const trim_empty_branches = (quadrant: Quadrant): Quadrant => {
     return quadrant;
   }
 
-  const { children } = quadrant;
-
-  if (children.every((child) => isLeaf(child))) {
-    let points = accumulate_points(quadrant);
+  if (quadrant.children.every((child) => isLeaf(child))) {
+    let points = (quadrant.children as [Leaf, Leaf, Leaf, Leaf]).reduce(
+      (arr, { children }) => [...arr, ...children],
+      [] as Point[]
+    );
 
     if (points.length <= max_children_per_quadrant) {
       return {
@@ -129,162 +185,94 @@ const trim_empty_branches = (quadrant: Quadrant): Quadrant => {
     return quadrant as Branch;
   }
 
-  return {
+  let me_and_my_sons = {
     ...quadrant,
-    children: children.map(trim_empty_branches),
+    children: quadrant.children.map(trim_empty_branches),
   } as Branch;
-};
 
-const build = ({ width, height, points = [] }: Size & { points?: Point[] }): Quadrant => {
-  if (width <= 0 || height <= 0) {
-    throw new Error(`Provided tree dimensions width: ${width}, height: ${height} should be > 0`);
-  }
+  if (me_and_my_sons.children.every((child) => isLeaf(child))) {
+    let points = (me_and_my_sons.children as [Leaf, Leaf, Leaf, Leaf]).reduce(
+      (arr, { children }) => [...arr, ...children],
+      [] as Point[]
+    );
 
-  let quadtree: Quadrant = {
-    nw: [0, 0],
-    se: [width, height],
-    children: [],
-  };
-
-  for (let point of points) {
-    quadtree = Quadtree.insert(point, quadtree);
-  }
-
-  return quadtree;
-};
-
-const insert = (point: Point, quadrant: Quadrant): Quadrant => {
-  if (isLeaf(quadrant)) {
-    if (quadrant.children.length + 1 > max_children_per_quadrant) {
-      let branch: Branch = leaf_to_branch(quadrant);
-
-      return insert(point, branch);
+    if (points.length <= max_children_per_quadrant) {
+      return {
+        ...me_and_my_sons,
+        children: points as Point[],
+      } as Leaf;
     }
-
-    return {
-      ...quadrant,
-      children: [...quadrant.children, point],
-    } as Leaf;
   }
 
-  let new_home_index = quadrant.children.findIndex((child) => region_contains_point(child, point));
-
-  if (new_home_index === -1) {
-    throw new Error();
-  }
-
-  return {
-    ...quadrant,
-    // A map might not be very performant tbh
-    children: quadrant.children.map((child, index) => {
-      if (index === new_home_index) {
-        return insert(point, child);
-      }
-
-      return child;
-    }),
-  } as Branch;
+  return me_and_my_sons;
 };
 
+// Ugh I could have avoided this if I made Quadtree a Quadrant itself but idk
 const Quadtree = {
-  build: build,
+  build: ({ width, height }: Size, points: Point[] = []): Tree => {
+    let tree: Tree = {
+      width,
+      height,
+      root: {
+        nw: [0, 0],
+        se: [width, height],
+        children: [] as Point[],
+      } as Leaf,
+    };
 
-  insert: insert,
-
-  map: (quadrant: Quadrant, fn: (q: Quadrant) => Quadrant): Quadrant => {
-    let result = fn(quadrant);
-
-    if (isLeaf(result)) {
-      return result as Leaf;
+    for (let point of points) {
+      tree = Quadtree.insert(tree, point);
     }
 
-    return {
-      ...result,
-      children: result.children.map((child) => Quadtree.map(child, fn)),
-    } as Branch;
+    return tree;
   },
-
-  reduce: <T>(quadrant: Quadrant, fn: (acc: T, curr: Quadrant) => T, value: T): T => {
-    let result = fn(value, quadrant);
-
-    if (isLeaf(quadrant)) {
-      return result;
-    }
-
-    return quadrant.children.reduce((child_acc, child_curr) => Quadtree.reduce(child_curr, fn, child_acc), result);
-  },
-
-  // Returns a depth-first iterator
-  dfs: (quadrant: Quadrant) => {
-    let stack = [quadrant];
-
-    return {
-      [Symbol.iterator]: function* () {
-        while (stack.length > 0) {
-          let element = stack.pop() as Quadrant;
-
-          if (!isLeaf(element)) {
-            stack.push(...[...element.children].reverse());
-          }
-
-          yield element;
-        }
-      },
-    };
-  },
-
-  // Returns a breadth-first iterator
-  bfs: (quadrant: Quadrant) => {
-    let queue = [quadrant];
-
-    return {
-      [Symbol.iterator]: function* () {
-        while (queue.length > 0) {
-          let element = queue.shift() as Quadrant;
-
-          if (!isLeaf(element)) {
-            queue.push(...[...element.children].reverse());
-          }
-
-          yield element;
-        }
-      },
-    };
-  },
-
-  update: (quadtree: Quadrant, fn: (point: Point) => Point) => {
+  insert: (tree: Tree, point: Point): Tree => ({
+    ...tree,
+    root: insert(tree.root, point),
+  }),
+  update: (tree: Tree, fn: (point: Point) => Point): Tree => {
     let points_to_rehome: Point[] = [];
 
-    let new_tree = Quadtree.map(quadtree, (quadrant: Quadrant) => {
+    let new_tree = Quadtree.map(tree, (quadrant: Quadrant) => {
       if (isLeaf(quadrant)) {
-        let new_children = quadrant.children.map(fn).filter((point) => {
-          if (!region_contains_point(quadrant as Region, point)) {
-            points_to_rehome.push(point);
-            return false;
-          }
-
-          return true;
-        });
-
         return {
           ...quadrant,
-          children: new_children,
-        };
+          children: quadrant.children.map(fn).filter((new_point) => {
+            if (contains_point(quadrant, new_point)) {
+              return true;
+            }
+
+            points_to_rehome.push(new_point);
+            return false;
+          }),
+        } as Leaf;
       }
 
       return quadrant;
     });
 
     for (let point of points_to_rehome) {
-      new_tree = Quadtree.insert(point, new_tree);
+      new_tree = Quadtree.insert(new_tree, point);
     }
 
-    return trim_empty_branches(new_tree);
+    new_tree = {
+      ...new_tree,
+      root: trim_empty_branches(new_tree.root),
+    };
+
+    return new_tree;
+  },
+  map: (tree: Tree, fn: (quadrant: Quadrant) => Quadrant): Tree => ({
+    ...tree,
+    root: map_quadrant(tree.root, fn),
+  }),
+  reduce: <T>(tree: Tree, fn: (acc: T, curr: Quadrant) => T, value: T): T => {
+    return reduce_quadrant(tree.root, fn, value);
   },
 };
 
-export type { Quadrant, Leaf, Point };
-
-export { isPoint, isLeaf, calculate_region_size };
-
 export default Quadtree;
+
+export { isLeaf, isPoint, calculate_region_size };
+
+export type { Quadrant, Branch, Leaf, Point, Tree };

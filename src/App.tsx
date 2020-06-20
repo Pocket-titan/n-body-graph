@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import Quadtree, { Quadrant, isPoint, Point, isLeaf, Leaf, calculate_region_size } from './Quadtree';
+import Quadtree, { Tree, Quadrant, isPoint, Point, isLeaf, Leaf, calculate_region_size } from './Quadtree';
 
 const Circle = ({ point }: { point: Point }) => {
   const { location } = point;
@@ -24,22 +24,19 @@ const Quad = ({ quadrant }: { quadrant: Quadrant }) => {
   let { width, height } = calculate_region_size(quadrant);
 
   return (
-    <div style={{ width, height, position: 'absolute', left: nw[0], top: nw[1], border: '1px solid red' }}>
+    <>
+      <div style={{ width, height, position: 'absolute', left: nw[0], top: nw[1], border: '1px solid red' }} />
       {isLeaf(quadrant)
         ? (quadrant.children as Point[]).map((point) => <Circle point={point} />)
         : (quadrant.children as Quadrant[]).map((child) => <Quad quadrant={child} />)}
-    </div>
+    </>
   );
 };
 
-const QuadTree = ({ quadtree }: { quadtree: Quadrant }) => {
-  let { width, height } = calculate_region_size(quadtree);
-
+const QuadTree = ({ quadtree: { width, height, root } }: { quadtree: Tree }) => {
   return (
     <div style={{ width, height, position: 'relative', border: '1px solid red' }}>
-      {isLeaf(quadtree)
-        ? (quadtree.children as Point[]).map((point) => null)
-        : (quadtree.children as Quadrant[]).map((child) => <Quad quadrant={child} />)}
+      <Quad quadrant={root} />
     </div>
   );
 };
@@ -59,7 +56,7 @@ let points = [
   },
 ];
 
-let initial_tree = Quadtree.build({ width: 500, height: 500, points });
+let initial_tree = Quadtree.build({ width: 500, height: 500 }, points);
 
 const App = () => {
   const [tree, setTree] = useState(initial_tree);
@@ -69,7 +66,7 @@ const App = () => {
       setTimeout(() => {
         update();
         schedule();
-      }, 1000);
+      }, 16.6);
 
     schedule();
   }, []);
